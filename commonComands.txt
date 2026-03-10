@@ -9,3 +9,15 @@ python -m fastapi run app/main.py --host 0.0.0.0 --port 8000
 
 Download llama 3 into ollama docker container:
 docker exec -it claude-ai-lab-v1-ollama-1 ollama pull llama3
+
+
+
+docker rm -f claude-ai-lab-v1-backend-1 claude-ai-lab-v1-frontend-1
+rm → elimina contenedores
+-f → los fuerza a parar si están corriendo
+
+
+docker rmi -f claude-ai-lab-v1-backend:latest claude-ai-lab-v1-frontend:latest
+rmi → elimina imágenes
+-f → fuerza eliminación si están en uso
+

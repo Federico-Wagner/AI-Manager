@@ -1,42 +1,35 @@
 import logging
 from uuid import UUID
 
+from fastapi import BackgroundTasks
 from sqlmodel import Session
 
 from app.config.settings import settings
-from app.models.message import Message
-from app.repositories import chat_repository
+from app.repositories import chat_repository, summary_repository
 from app.router import model_router
 from app.schemas.chat_request import ChatRequest, CreateSessionRequest
 from app.schemas.chat_response import ChatResponse, MessageResponse, SessionResponse
+from app.services import memory_service
 
 logger = logging.getLogger(__name__)
 
 
-def _build_context_prompt(history: list[Message], current_prompt: str) -> str:
-    """Build a prompt string that includes conversation history as context."""
-    parts = ["System:\nYou are a helpful AI assistant.\n"]
-    if history:
-        parts.append("Conversation history:\n")
-        for msg in history:
-            label = "User" if msg.role == "user" else "Assistant"
-            parts.append(f"{label}: {msg.content}")
-        parts.append("")  # blank line before user question
-    parts.append(f"User question:\n{current_prompt}")
-    return "\n".join(parts)
-
-
-def process_chat(session: Session, request: ChatRequest) -> ChatResponse:
+def process_chat(
+    session: Session,
+    request: ChatRequest,
+    background_tasks: BackgroundTasks,
+) -> ChatResponse:
     """Orchestrate the full chat flow.
 
     Flow:
         1. Get or create chat session
-        2. Fetch last N messages for context (before saving current message)
+        2. Fetch last N messages + existing summary for context (before saving current message)
         3. Persist user message
-        4. Build context prompt
+        4. Build context prompt (summary + recent history + user question)
         5. Route prompt to AI model
         6. Persist assistant response
-        7. Return response with session ID
+        7. Schedule background summary check
+        8. Return response with session ID
     """
     # Step 1: resolve session
     if request.chat_session_id:
@@ -45,17 +38,21 @@ def process_chat(session: Session, request: ChatRequest) -> ChatResponse:
         title = request.prompt[:60]
         chat_session = chat_repository.create_chat_session(session, title=title)
 
-    # Step 2: fetch conversation history before saving current message
+    # Step 2: fetch context before saving current message
     context_window = settings.chat_context_window
     history = chat_repository.get_last_messages(
         session=session,
         chat_session_id=chat_session.id,
         limit=context_window,
     )
+    existing_summary = summary_repository.get_summary(session, chat_session.id)
+    summary_text = existing_summary.summary_text if existing_summary else None
+
     logger.info(
-        "Building context with %d messages (window=%d, session=%s)",
+        "Building context: %d messages (window=%d), summary=%s, session=%s",
         len(history),
         context_window,
+        "yes" if summary_text else "no",
         chat_session.id,
     )
 
@@ -67,8 +64,8 @@ def process_chat(session: Session, request: ChatRequest) -> ChatResponse:
         content=request.prompt,
     )
 
-    # Step 4: build prompt with conversation context
-    context_prompt = _build_context_prompt(history, request.prompt)
+    # Step 4: build prompt with summary + recent history + user question
+    context_prompt = memory_service.build_context_prompt(history, summary_text, request.prompt)
 
     # Step 5: call AI model
     ai_response = model_router.route(prompt=context_prompt, model=request.model)
@@ -79,6 +76,13 @@ def process_chat(session: Session, request: ChatRequest) -> ChatResponse:
         chat_session_id=chat_session.id,
         role="assistant",
         content=ai_response,
+    )
+
+    # Step 7: schedule summary check (runs after response is returned)
+    background_tasks.add_task(
+        memory_service.generate_summary_conditional,
+        chat_session_id=chat_session.id,
+        model=request.model,
     )
 
     return ChatResponse(chat_session_id=chat_session.id, response=ai_response)

@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Path
+from fastapi import APIRouter, BackgroundTasks, Path
 
 from app.database.connection import SessionDep
 from app.schemas.chat_request import ChatRequest, CreateSessionRequest
@@ -12,12 +12,16 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.post("/")
-def send_message(request: ChatRequest, session: SessionDep) -> ChatResponse:
+def send_message(
+    request: ChatRequest,
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+) -> ChatResponse:
     """Send a prompt and receive an AI response.
 
     Creates a new session automatically if chat_session_id is not provided.
     """
-    return chat_service.process_chat(session=session, request=request)
+    return chat_service.process_chat(session=session, request=request, background_tasks=background_tasks)
 
 
 @router.get("/sessions")

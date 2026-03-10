@@ -13,8 +13,12 @@ class Settings(BaseSettings):
     ollama_host: str
     ollama_port: int
     ollama_model: str
+    ollama_timeout: int = 300
 
     chat_context_window: int # = 8
+    summary_trigger_messages: int # = 15
+    summary_max_tokens: int # = 200
+
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
 
