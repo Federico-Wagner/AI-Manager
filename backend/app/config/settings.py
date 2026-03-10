@@ -14,10 +14,12 @@ class Settings(BaseSettings):
     ollama_port: int
     ollama_model: str
 
+    chat_context_window: int # = 8
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
 
     cors_origins: list[str] = ["http://localhost:4200"]
+
 
     @property
     def database_url(self) -> str:

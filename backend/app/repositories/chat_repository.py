@@ -35,6 +35,19 @@ def get_session_messages(session: Session, chat_session_id: UUID) -> list[Messag
     )
 
 
+def get_last_messages(session: Session, chat_session_id: UUID, limit: int) -> list[Message]:
+    """Return the last `limit` messages for a session in chronological order."""
+    rows = list(
+        session.exec(
+            select(Message)
+            .where(Message.chat_session_id == chat_session_id)
+            .order_by(Message.created_at.desc())
+            .limit(limit)
+        ).all()
+    )
+    return list(reversed(rows))
+
+
 def create_chat_session(session: Session, title: str = "New Chat") -> ChatSession:
     """Create and persist a new chat session."""
     chat_session = ChatSession(title=title)
