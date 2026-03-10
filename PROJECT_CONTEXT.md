@@ -128,23 +128,35 @@ claude-ai-lab-V1/
 │   ├── alembic.ini
 │   └── migrations/
 │       └── env.py                      # Alembic env (future migrations)
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── components/
+│   │   │   │   └── chat/
+│   │   │   │       ├── chat.component.ts   # Chat logic + API calls
+│   │   │   │       ├── chat.component.html # Chat UI template
+│   │   │   │       └── chat.component.css  # Bubble styles
+│   │   │   ├── services/
+│   │   │   │   └── chat.service.ts         # HttpClient wrapper for backend
+│   │   │   ├── models/
+│   │   │   │   ├── message.model.ts        # { role, content }
+│   │   │   │   └── chat-response.model.ts  # ChatResponse, Session, MessageResponse
+│   │   │   ├── app.module.ts               # NgModule declarations
+│   │   │   ├── app.component.ts/html/css   # Root shell with top bar
+│   │   ├── environments/
+│   │   │   ├── environment.ts              # apiBaseUrl for dev
+│   │   │   └── environment.prod.ts         # apiBaseUrl for prod
+│   │   ├── index.html
+│   │   ├── main.ts
+│   │   └── styles.css
+│   ├── angular.json
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── nginx.conf                          # SPA routing + cache headers
+│   └── Dockerfile                          # Multi-stage: Node build + nginx serve
 ├── docker-compose.yml
-├── docker-local.env                    # NOT committed — local secrets
+├── docker-local.env                        # NOT committed — local secrets
 └── .gitignore
-```
-
-### Frontend Structure (Angular)
-
-```
-src/app/
-├── components/
-│   └── chat/
-│       ├── chat.component.ts
-│       └── chat.component.html
-├── services/
-│   └── chat.service.ts
-└── models/
-    └── message.ts
 ```
 
 ---
@@ -155,14 +167,25 @@ The entire application is **dockerized**. All services are managed via **Docker 
 
 ### Services
 
-| Service    | Description                        | Port  |
-|------------|------------------------------------|-------|
-| `frontend` | Angular app (served via Nginx)     | 4200  |
-| `backend`  | FastAPI Python API                 | 8000  |
-| `postgres` | PostgreSQL database                | 5432  |
-| `ollama`   | Local LLM runtime                  | 11434 |
+| Service    | Description                        | Port exposed | Networks           |
+|------------|------------------------------------|--------------|--------------------|
+| `frontend` | Angular app (served via Nginx)     | 4200         | public, internal   |
+| `backend`  | FastAPI Python API                 | 8000         | public, internal   |
+| `postgres` | PostgreSQL database                | 5432         | public, internal   |
+| `ollama`   | Local LLM runtime                  | internal only| internal           |
 
 All services run locally via a single `docker-compose.yml`.
+
+### Networks
+
+Two Docker networks isolate traffic:
+
+| Network    | Driver | Purpose                                                          |
+|------------|--------|------------------------------------------------------------------|
+| `public`   | bridge | Exposes frontend, backend, and postgres to the host machine      |
+| `internal` | bridge (internal) | Service-to-service communication only — Ollama is **not** reachable from the host |
+
+Ollama is intentionally **not port-mapped** to the host. Only `backend` can reach it via the `internal` network.
 
 ---
 
@@ -189,9 +212,8 @@ POSTGRES_DB=ai_chat
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/ai_chat
 OPENAI_API_KEY=sk-...
 OLLAMA_BASE_URL=http://ollama:11434
-
-# Frontend
-API_BASE_URL=http://localhost:8000
+OLLAMA_HOST=ollama
+OLLAMA_PORT=11434
 ```
 
 ---
@@ -272,7 +294,7 @@ docker-compose exec postgres psql -U postgres
 
 ## MVP Features
 
-- [x] Chat UI (Angular)
+- [x] Chat UI (Angular 17 + NgModule + HttpClient)
 - [x] FastAPI backend
 - [x] Model routing (local / external)
 - [x] Local LLM via Ollama
@@ -289,3 +311,5 @@ docker-compose exec postgres psql -U postgres
 |------------|-------------|
 | 2026-03-09 | Inicio del proyecto — contexto inicial definido |
 | 2026-03-09 | Backend generado — FastAPI completo con SQLModel, Ollama, OpenAI, Docker Compose |
+| 2026-03-09 | Frontend generado — Angular 17, ChatComponent, ChatService, nginx, Docker multi-stage |
+| 2026-03-10 | Docker Compose refactorizado — redes public/internal, Ollama aislado sin exposición al host |

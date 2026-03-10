@@ -1,0 +1,54 @@
+<div class="chat-wrapper">
+
+  <!-- ── Messages area ── -->
+  <div class="messages-area" #messagesContainer>
+
+    <div *ngIf="messages.length === 0" class="empty-state">
+      <p>Select a model and type your first message to start.</p>
+    </div>
+
+    <div
+      *ngFor="let msg of messages"
+      class="message-bubble"
+      [class.user-message]="msg.role === 'user'"
+      [class.ai-message]="msg.role === 'assistant'"
+    >
+      <span class="message-role">{{ msg.role === 'user' ? 'You' : 'AI' }}</span>
+      <p class="message-content">{{ msg.content }}</p>
+    </div>
+
+    <!-- Typing indicator -->
+    <div *ngIf="isLoading" class="message-bubble ai-message loading">
+      <span class="message-role">AI</span>
+      <p class="message-content">Thinking…</p>
+    </div>
+
+  </div>
+
+  <!-- ── Input area ── -->
+  <div class="input-area">
+
+    <select [(ngModel)]="selectedModel" class="model-select" [disabled]="isLoading">
+      <option value="local">Local (Ollama)</option>
+      <option value="openai">OpenAI</option>
+    </select>
+
+    <textarea
+      [(ngModel)]="prompt"
+      (keydown.enter)="onEnterKey($event)"
+      placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+      class="prompt-input"
+      rows="1"
+      [disabled]="isLoading"
+    ></textarea>
+
+    <button
+      class="send-btn"
+      (click)="sendMessage()"
+      [disabled]="isLoading || !prompt.trim()"
+    >
+      {{ isLoading ? '…' : 'Send' }}
+    </button>
+
+  </div>
+</div>

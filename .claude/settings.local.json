@@ -4,7 +4,9 @@
       "Bash(npx skills find \"fastapi best practices\")",
       "Bash(npx skills find \"python microservice\")",
       "Bash(npx skills add fastapi/fastapi@fastapi -y)",
-      "Bash(npx skills add ofershap/fastapi-best-practices@fastapi-best-practices -y)"
+      "Bash(npx skills add ofershap/fastapi-best-practices@fastapi-best-practices -y)",
+      "Bash(docker compose logs backend)",
+      "Bash(docker compose exec postgres psql -U postgres -d ai_chat -c \"\\\\dt\")"
     ]
   }
 }

@@ -1,4 +1,15 @@
 services:
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "4200:80"
+    depends_on:
+      - backend
+    networks:
+      - public
+      - internal
+
   backend:
     build: ./backend
     ports:
@@ -10,6 +21,9 @@ services:
         condition: service_healthy
       ollama:
         condition: service_started
+    networks:
+      - public
+      - internal
 
   postgres:
     image: postgres:15
@@ -24,16 +38,29 @@ services:
       retries: 5
     env_file:
       - docker-local.env
+    networks:
+      - public
+      - internal
 
   ollama:
     image: ollama/ollama
-    ports:
-      - "${OLLAMA_PORT}:${OLLAMA_PORT}"
     volumes:
       - ollama_data:/root/.ollama
     env_file:
       - docker-local.env
+    networks:
+      - internal
+    expose:
+      - "11434"
 
 volumes:
   postgres_data:
   ollama_data:
+
+networks:
+  public:
+    driver: bridge
+
+  internal:
+    driver: bridge
+    internal: true

@@ -2,20 +2,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
-
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql://postgres:postgres@localhost:5432/ai_chat"
-    openai_api_key: str = ""
-    ollama_host: str = "ollama"
-    ollama_port: int = "11434"
-    ollama_model: str = "llama3"
+    db_name: str
+    db_host: str
+    db_port: int
+    db_user: str
+    db_password: str
+
+    ollama_host: str
+    ollama_port: int
+    ollama_model: str
+
+    openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
+
+    cors_origins: list[str] = ["http://localhost:4200"]
+
+    @property
+    def database_url(self) -> str:
+        return f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
 
     @property
     def ollama_base_url(self) -> str:
-        """Constructs the Ollama base URL from host and port."""
         return f"http://{self.ollama_host}:{self.ollama_port}"
 
 
