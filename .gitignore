@@ -1,1 +1,7 @@
 docker-local.env
+.env
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/

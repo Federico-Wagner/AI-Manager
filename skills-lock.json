@@ -1,6 +1,16 @@
 {
   "version": 1,
   "skills": {
+    "fastapi": {
+      "source": "fastapi/fastapi",
+      "sourceType": "github",
+      "computedHash": "9feb517089c269af4fdab5031dea1100a92fd50081e906ccfaf8a971858e39f9"
+    },
+    "fastapi-best-practices": {
+      "source": "ofershap/fastapi-best-practices",
+      "sourceType": "github",
+      "computedHash": "8e49d81013dfe4ec60816b7483cbc5e6d8ddbf5015255036f4641e497b6d796c"
+    },
     "find-skills": {
       "source": "vercel-labs/skills",
       "sourceType": "github",

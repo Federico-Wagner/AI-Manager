@@ -33,7 +33,11 @@ PostgreSQL (chat persistence)
 - **Responsibilities:** Chat UI, AI model selection (local or API), send prompts, display responses
 
 ### Backend
-- **Framework:** FastAPI (Python)
+- **Framework:** FastAPI (Python 3.11)
+- **ORM:** SQLModel (built on SQLAlchemy)
+- **Migrations:** Alembic
+- **HTTP Client:** httpx (Ollama calls)
+- **Config:** pydantic-settings (BaseSettings)
 - **Responsibilities:** Handle chat requests, store messages, route prompts to AI models, return responses
 
 ### AI Models
@@ -92,31 +96,41 @@ Message saved in PostgreSQL
 ## Repository Structure (Monorepo)
 
 ```
-ai-chat-mvp/
-├── frontend/
-│   └── angular-app/
+claude-ai-lab-V1/
 ├── backend/
-│   └── app/
-│       ├── api/
-│       │   └── chat_controller.py
-│       ├── services/
-│       │   └── chat_service.py
-│       ├── router/
-│       │   └── model_router.py
-│       ├── clients/
-│       │   ├── ollama_client.py
-│       │   └── openai_client.py
-│       ├── repositories/
-│       │   └── chat_repository.py
-│       ├── models/
-│       │   ├── chat_session.py
-│       │   └── message.py
-│       ├── database/
-│       │   └── connection.py
-│       └── main.py
+│   ├── app/
+│   │   ├── api/
+│   │   │   └── chat_controller.py      # FastAPI router — /chat endpoints
+│   │   ├── services/
+│   │   │   └── chat_service.py         # Business logic orchestration
+│   │   ├── router/
+│   │   │   └── model_router.py         # Routes prompts to Ollama or OpenAI
+│   │   ├── clients/
+│   │   │   ├── ollama_client.py        # httpx call to Ollama /api/generate
+│   │   │   └── openai_client.py        # OpenAI SDK chat completion
+│   │   ├── repositories/
+│   │   │   └── chat_repository.py      # All DB read/write operations
+│   │   ├── models/
+│   │   │   ├── chat_session.py         # SQLModel table: chat_sessions
+│   │   │   └── message.py              # SQLModel table: messages
+│   │   ├── schemas/
+│   │   │   ├── chat_request.py         # Pydantic request models
+│   │   │   └── chat_response.py        # Pydantic response models
+│   │   ├── database/
+│   │   │   ├── connection.py           # Engine, SessionDep, create_all
+│   │   │   └── base.py                 # Model imports for metadata registry
+│   │   ├── config/
+│   │   │   └── settings.py             # Pydantic BaseSettings (env vars)
+│   │   └── main.py                     # FastAPI app + lifespan
+│   ├── requirements.txt
+│   └── Dockerfile
 ├── database/
+│   ├── alembic.ini
 │   └── migrations/
-└── docker-compose.yml
+│       └── env.py                      # Alembic env (future migrations)
+├── docker-compose.yml
+├── docker-local.env                    # NOT committed — local secrets
+└── .gitignore
 ```
 
 ### Frontend Structure (Angular)
@@ -274,3 +288,4 @@ docker-compose exec postgres psql -U postgres
 | Fecha      | Descripción |
 |------------|-------------|
 | 2026-03-09 | Inicio del proyecto — contexto inicial definido |
+| 2026-03-09 | Backend generado — FastAPI completo con SQLModel, Ollama, OpenAI, Docker Compose |

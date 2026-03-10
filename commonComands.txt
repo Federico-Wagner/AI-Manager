@@ -1,0 +1,6 @@
+docker compose --env-file docker-local.env -f docker-compose.yml build
+
+docker compose --env-file docker-local.env -f docker-compose.yml up -d
+
+
+python -m fastapi run app/main.py --host 0.0.0.0 --port 8000

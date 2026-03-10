@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx skills find \"fastapi best practices\")",
+      "Bash(npx skills find \"python microservice\")",
+      "Bash(npx skills add fastapi/fastapi@fastapi -y)",
+      "Bash(npx skills add ofershap/fastapi-best-practices@fastapi-best-practices -y)"
+    ]
+  }
+}
