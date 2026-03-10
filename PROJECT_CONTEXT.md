@@ -189,7 +189,7 @@ Ollama is intentionally **not port-mapped** to the host. Only `backend` can reac
 
 ---
 
-### Environment Variables
+## Environment Variables
 
 All environment variables are defined in a single file:
 
@@ -200,95 +200,16 @@ docker-local.env
 This file is loaded by `docker-compose.yml` and shared across services.
 It is **not committed to version control** (add to `.gitignore`).
 
-#### Example variables
+#### Variables
 
-```env
-# PostgreSQL
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=ai_chat
-
-# Backend
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/ai_chat
-OPENAI_API_KEY=sk-...
-OLLAMA_BASE_URL=http://ollama:11434
-OLLAMA_HOST=ollama
-OLLAMA_PORT=11434
-```
-
----
-
-### Docker Commands
-
-#### Build all images
-
-```bash
-docker-compose build
-```
-
-#### Build a specific service image
-
-```bash
-docker-compose build frontend
-docker-compose build backend
-```
-
-#### Start all containers
-
-```bash
-docker-compose up
-```
-
-#### Start in detached mode (background)
-
-```bash
-docker-compose up -d
-```
-
-#### Start and rebuild images before starting
-
-```bash
-docker-compose up --build
-```
-
-#### Start a specific service
-
-```bash
-docker-compose up backend
-docker-compose up ollama
-```
-
-#### Stop all containers
-
-```bash
-docker-compose down
-```
-
-#### Stop and remove volumes (wipes DB data)
-
-```bash
-docker-compose down -v
-```
-
-#### View running containers
-
-```bash
-docker-compose ps
-```
-
-#### View logs
-
-```bash
-docker-compose logs -f            # all services
-docker-compose logs -f backend    # specific service
-```
-
-#### Execute command inside a container
-
-```bash
-docker-compose exec backend bash
-docker-compose exec postgres psql -U postgres
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | — | PostgreSQL container config |
+| `DB_USER` / `DB_PASSWORD` / `DB_HOST` / `DB_PORT` / `DB_NAME` | — | Backend DB connection |
+| `OLLAMA_HOST` / `OLLAMA_PORT` / `OLLAMA_MODEL` | — | Ollama config |
+| `OPENAI_API_KEY` | — | OpenAI API key (optional) |
+| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model name |
+| `CHAT_CONTEXT_WINDOW` | `8` | Number of past messages included in each prompt |
 
 ---
 
@@ -300,8 +221,65 @@ docker-compose exec postgres psql -U postgres
 - [x] Local LLM via Ollama
 - [x] External AI via OpenAI
 - [x] Chat history stored in PostgreSQL
+- [x] Conversation memory — configurable context window injected into each prompt
+- [x] Session selector sidebar — list, switch, and start chat sessions from the UI
 
 **Out of scope for MVP:** authentication, observability, advanced AI features.
+
+---
+
+## Conversation Memory
+
+The backend includes configurable conversation context support via `CHAT_CONTEXT_WINDOW` (default: 8).
+
+On each chat request, the service:
+1. Fetches the last N messages from the DB (before persisting the current message)
+2. Builds a structured prompt including conversation history and the current user question
+3. Sends the full context prompt to the model
+
+Prompt format:
+```
+System:
+You are a helpful AI assistant.
+
+Conversation history:
+
+User: <message>
+Assistant: <message>
+...
+
+User question:
+<current prompt>
+```
+
+Config: `backend/app/config/settings.py` → `chat_context_window: int`
+Env var: `CHAT_CONTEXT_WINDOW=8` in `docker-local.env`
+
+---
+
+## Session Selector (Frontend)
+
+The Angular UI now includes a left sidebar for session management:
+
+- Lists all sessions on load (ordered by most recent first)
+- Highlights the active session
+- Clicking a session loads its full message history
+- **＋** button starts a new blank chat
+- Sidebar auto-refreshes after each message is sent (captures auto-created sessions)
+
+Component: `frontend/src/app/components/chat/chat.component.ts`
+Service methods used: `getSessions()`, `getSessionMessages()` (previously defined but unused)
+
+---
+
+## Logging
+
+Application-level logging is configured in `backend/app/main.py` via `logging.basicConfig(level=INFO)`.
+
+Each chat request logs:
+```
+INFO  app.services.chat_service  Building context with N messages (window=8, session=<uuid>)
+```
 
 ---
 
@@ -313,3 +291,6 @@ docker-compose exec postgres psql -U postgres
 | 2026-03-09 | Backend generado — FastAPI completo con SQLModel, Ollama, OpenAI, Docker Compose |
 | 2026-03-09 | Frontend generado — Angular 17, ChatComponent, ChatService, nginx, Docker multi-stage |
 | 2026-03-10 | Docker Compose refactorizado — redes public/internal, Ollama aislado sin exposición al host |
+| 2026-03-10 | Memoria conversacional — CHAT_CONTEXT_WINDOW, get_last_messages(), prompt con historial |
+| 2026-03-10 | Sidebar de sesiones en Angular — selector, carga de historial, botón nueva sesión |
+| 2026-03-10 | Logging — logging.basicConfig en main.py, INFO en chat_service |
