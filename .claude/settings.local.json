@@ -6,7 +6,9 @@
       "Bash(npx skills add fastapi/fastapi@fastapi -y)",
       "Bash(npx skills add ofershap/fastapi-best-practices@fastapi-best-practices -y)",
       "Bash(docker compose logs backend)",
-      "Bash(docker compose exec postgres psql -U postgres -d ai_chat -c \"\\\\dt\")"
+      "Bash(docker compose exec postgres psql -U postgres -d ai_chat -c \"\\\\dt\")",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
