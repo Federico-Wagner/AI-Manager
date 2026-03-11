@@ -22,6 +22,12 @@ Backend API (FastAPI)
    └── External Model (OpenAI / GPT-4o)
         ↓
 PostgreSQL (chat persistence)
+        ↓
+   Document Pipeline (RAG Stage 1)
+   ├── File storage  (/data/uploads)
+   ├── Text extraction + chunking
+   ├── Embeddings (sentence-transformers)
+   └── Qdrant (vector database)
 ```
 
 ---
@@ -38,7 +44,8 @@ PostgreSQL (chat persistence)
 - **Migrations:** Alembic
 - **HTTP Client:** httpx (Ollama calls)
 - **Config:** pydantic-settings (BaseSettings)
-- **Responsibilities:** Handle chat requests, store messages, route prompts to AI models, return responses
+- **Embeddings:** sentence-transformers (`all-MiniLM-L6-v2`, 384-dim)
+- **Responsibilities:** Handle chat requests, store messages, route prompts to AI models, ingest documents, return responses
 
 ### AI Models
 | Type     | Runtime | Example Model |
@@ -47,9 +54,10 @@ PostgreSQL (chat persistence)
 | External | OpenAI  | GPT-4o        |
 
 ### Database
-- **PostgreSQL** — persists chat history
+- **PostgreSQL** — persists chat history and document metadata
+- **Qdrant** — vector database for document chunk embeddings
 
-#### Tables
+#### PostgreSQL Tables
 
 `chat_sessions`
 - id
@@ -70,6 +78,22 @@ PostgreSQL (chat persistence)
 - summarized_message_count
 - created_at
 - updated_at
+
+`documents`
+- id
+- chat_session_id
+- file_name
+- file_type (pdf | txt | md)
+- file_size (bytes)
+- storage_path (/data/uploads/{session_id}/{doc_id}/filename)
+- status (uploaded | processing | processed | failed)
+- created_at
+
+#### Qdrant Collection
+
+`documents_chunks`
+- Vector size: 384 (all-MiniLM-L6-v2)
+- Payload per point: `document_id`, `chat_session_id`, `chunk_index`, `text`
 
 ---
 
@@ -108,50 +132,63 @@ claude-ai-lab-V1/
 ├── backend/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── chat_controller.py      # FastAPI router — /chat endpoints
+│   │   │   ├── chat_controller.py          # FastAPI router — /chat endpoints + DELETE session
+│   │   │   └── document_controller.py      # FastAPI router — /sessions/{id}/documents endpoints
 │   │   ├── services/
-│   │   │   ├── chat_service.py         # Business logic orchestration
-│   │   │   └── memory_service.py       # Prompt builder + background summary generation
+│   │   │   ├── chat_service.py             # Chat orchestration + delete_session()
+│   │   │   ├── memory_service.py           # Prompt builder + background summary generation
+│   │   │   ├── document_service.py         # Upload orchestration + delete (disk + Qdrant + DB)
+│   │   │   ├── document_ingestion_service.py # Pipeline: extract → chunk → embed → store
+│   │   │   └── vector_store_service.py     # Qdrant client wrapper
 │   │   ├── router/
-│   │   │   └── model_router.py         # Routes prompts to Ollama or OpenAI
+│   │   │   └── model_router.py             # Routes prompts to Ollama or OpenAI
 │   │   ├── clients/
-│   │   │   ├── ollama_client.py        # httpx call to Ollama /api/generate
-│   │   │   └── openai_client.py        # OpenAI SDK chat completion
+│   │   │   ├── ollama_client.py            # httpx call to Ollama /api/generate
+│   │   │   └── openai_client.py            # OpenAI SDK chat completion
 │   │   ├── repositories/
-│   │   │   ├── chat_repository.py      # All DB read/write operations
-│   │   │   └── summary_repository.py   # get/upsert conversation_summaries
+│   │   │   ├── chat_repository.py          # All DB read/write for chat
+│   │   │   ├── summary_repository.py       # get/upsert conversation_summaries
+│   │   │   └── document_repository.py      # CRUD for documents table
 │   │   ├── models/
-│   │   │   ├── chat_session.py         # SQLModel table: chat_sessions
-│   │   │   ├── message.py              # SQLModel table: messages
-│   │   │   └── conversation_summary.py # SQLModel table: conversation_summaries
+│   │   │   ├── chat_session.py             # SQLModel table: chat_sessions
+│   │   │   ├── message.py                  # SQLModel table: messages
+│   │   │   ├── conversation_summary.py     # SQLModel table: conversation_summaries
+│   │   │   └── document.py                 # SQLModel table: documents
 │   │   ├── schemas/
-│   │   │   ├── chat_request.py         # Pydantic request models
-│   │   │   └── chat_response.py        # Pydantic response models
+│   │   │   ├── chat_request.py             # Pydantic request models
+│   │   │   ├── chat_response.py            # Pydantic response models
+│   │   │   └── document_schemas.py         # DocumentUploadResponse, DocumentResponse
 │   │   ├── database/
-│   │   │   ├── connection.py           # Engine, SessionDep, create_all
-│   │   │   └── base.py                 # Model imports for metadata registry
+│   │   │   ├── connection.py               # Engine, SessionDep, create_all
+│   │   │   └── base.py                     # Model imports for metadata registry
 │   │   ├── config/
-│   │   │   └── settings.py             # Pydantic BaseSettings (env vars)
-│   │   └── main.py                     # FastAPI app + lifespan
+│   │   │   └── settings.py                 # Pydantic BaseSettings (env vars)
+│   │   └── main.py                         # FastAPI app + lifespan + Qdrant init
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── database/
 │   ├── alembic.ini
 │   └── migrations/
-│       └── env.py                      # Alembic env (future migrations)
+│       └── env.py                          # Alembic env (future migrations)
 ├── frontend/
 │   ├── src/
 │   │   ├── app/
 │   │   │   ├── components/
-│   │   │   │   └── chat/
-│   │   │   │       ├── chat.component.ts   # Chat logic + API calls
-│   │   │   │       ├── chat.component.html # Chat UI template
-│   │   │   │       └── chat.component.css  # Bubble styles
+│   │   │   │   ├── chat/
+│   │   │   │   │   ├── chat.component.ts   # Chat logic + session delete
+│   │   │   │   │   ├── chat.component.html # Chat UI + session delete button
+│   │   │   │   │   └── chat.component.css  # Bubble styles + sidebar hover-reveal delete
+│   │   │   │   └── documents-panel/
+│   │   │   │       ├── documents-panel.component.ts   # Upload, list, delete documents
+│   │   │   │       ├── documents-panel.component.html # Drop zone + document list
+│   │   │   │       └── documents-panel.component.css  # Panel + status badge styles
 │   │   │   ├── services/
-│   │   │   │   └── chat.service.ts         # HttpClient wrapper for backend
+│   │   │   │   ├── chat.service.ts         # HttpClient wrapper — chat + deleteSession()
+│   │   │   │   └── document.service.ts     # HttpClient wrapper — documents API
 │   │   │   ├── models/
 │   │   │   │   ├── message.model.ts        # { role, content }
-│   │   │   │   └── chat-response.model.ts  # ChatResponse, Session, MessageResponse
+│   │   │   │   ├── chat-response.model.ts  # ChatResponse, Session, MessageResponse
+│   │   │   │   └── document.model.ts       # Document, DocumentUploadResponse
 │   │   │   ├── app.module.ts               # NgModule declarations
 │   │   │   ├── app.component.ts/html/css   # Root shell with top bar
 │   │   ├── environments/
@@ -184,8 +221,18 @@ The entire application is **dockerized**. All services are managed via **Docker 
 | `backend`  | FastAPI Python API                 | 8000         | public, internal   |
 | `postgres` | PostgreSQL database                | 5432         | public, internal   |
 | `ollama`   | Local LLM runtime                  | internal only| internal           |
+| `qdrant`   | Vector database                    | 6333         | internal           |
 
 All services run locally via a single `docker-compose.yml`.
+
+### Volumes
+
+| Volume         | Purpose                                    |
+|----------------|--------------------------------------------|
+| `postgres_data`| Persists PostgreSQL data                   |
+| `ollama_data`  | Persists downloaded Ollama models          |
+| `qdrant_data`  | Persists Qdrant vector index               |
+| `uploads_data` | Persists uploaded files (`/data/uploads`)  |
 
 ### Networks
 
@@ -194,9 +241,9 @@ Two Docker networks isolate traffic:
 | Network    | Driver | Purpose                                                          |
 |------------|--------|------------------------------------------------------------------|
 | `public`   | bridge | Exposes frontend, backend, and postgres to the host machine      |
-| `internal` | bridge (internal) | Service-to-service communication only — Ollama is **not** reachable from the host |
+| `internal` | bridge (internal) | Service-to-service only — Ollama and Qdrant are **not** reachable from the host |
 
-Ollama is intentionally **not port-mapped** to the host. Only `backend` can reach it via the `internal` network.
+Ollama and Qdrant are intentionally on the `internal` network only. Only `backend` can reach them.
 
 ---
 
@@ -224,6 +271,10 @@ It is **not committed to version control** (add to `.gitignore`).
 | `CHAT_CONTEXT_WINDOW` | `8` | Number of recent messages included in each prompt |
 | `SUMMARY_TRIGGER_MESSAGES` | `15` | Unsummarized messages needed to trigger a new summary |
 | `SUMMARY_MAX_TOKENS` | `200` | Target token budget for generated summaries |
+| `VECTOR_DB_URL` | `http://qdrant:6333` | Qdrant service URL |
+| `UPLOADS_DIR` | `/data/uploads` | Host path inside backend container for uploaded files |
+| `RAG_CHUNK_SIZE` | `300` | Approximate token size per text chunk |
+| `RAG_CHUNK_OVERLAP` | `50` | Overlap between consecutive chunks (tokens) |
 
 ---
 
@@ -237,9 +288,11 @@ It is **not committed to version control** (add to `.gitignore`).
 - [x] Chat history stored in PostgreSQL
 - [x] Conversation memory — configurable context window injected into each prompt
 - [x] Long-term memory — periodic LLM-generated summaries stored in DB, prepended to future prompts
-- [x] Session selector sidebar — list, switch, and start chat sessions from the UI
+- [x] Session selector sidebar — list, switch, start, and **delete** chat sessions from the UI
+- [x] Document upload & RAG ingestion pipeline — upload PDF/TXT/MD per session, auto-chunk + embed + store in Qdrant
+- [x] Documents panel — drag & drop upload, document list with status badges, per-document delete
 
-**Out of scope for MVP:** authentication, observability, advanced AI features.
+**Out of scope for MVP:** authentication, observability, RAG retrieval during chat (Stage 2).
 
 ---
 
@@ -284,16 +337,81 @@ Config: `backend/app/config/settings.py` → `chat_context_window`, `summary_tri
 
 ## Session Selector (Frontend)
 
-The Angular UI now includes a left sidebar for session management:
+The Angular UI includes a left sidebar for session management:
 
 - Lists all sessions on load (ordered by most recent first)
 - Highlights the active session
 - Clicking a session loads its full message history
 - **＋** button starts a new blank chat
+- **✕** button (hover-reveal) deletes a session with confirmation dialog — clears messages, documents, summary, and Qdrant chunks
 - Sidebar auto-refreshes after each message is sent (captures auto-created sessions)
 
 Component: `frontend/src/app/components/chat/chat.component.ts`
-Service methods used: `getSessions()`, `getSessionMessages()` (previously defined but unused)
+Service methods: `getSessions()`, `getSessionMessages()`, `deleteSession()`
+
+---
+
+## Document Upload & RAG Pipeline
+
+Users can attach files to any chat session. Files are processed asynchronously into a vector database for future RAG retrieval.
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/sessions/{session_id}/documents` | Upload a file (multipart/form-data) |
+| `GET` | `/sessions/{session_id}/documents` | List documents for a session |
+| `DELETE` | `/sessions/documents/{document_id}` | Delete document (file + Qdrant + DB) |
+
+### Ingestion Pipeline (BackgroundTask)
+
+```
+File upload (PDF / TXT / MD)
+        ↓
+Save to /data/uploads/{session_id}/{doc_id}/filename
+        ↓
+Persist Document record (status=uploaded)
+        ↓
+BackgroundTask: document_ingestion_service.process_document()
+        ↓
+  1. Extract text (pypdf / plain text)
+  2. Chunk text (≈300 tokens, 50 token overlap)
+  3. Embed chunks — SentenceTransformer("all-MiniLM-L6-v2") → 384-dim vectors
+  4. Upsert points into Qdrant collection "documents_chunks"
+  5. Update status → processed  (or failed on error)
+```
+
+The ingestion task runs after the upload response is returned — zero latency to the upload call.
+
+### Document Status Values
+
+| Status | Meaning |
+|--------|---------|
+| `uploaded` | File saved, ingestion not yet started |
+| `processing` | Background task running |
+| `processed` | Chunks stored in Qdrant — ready for RAG |
+| `failed` | Ingestion error (logged, file kept) |
+
+### Session Deletion Cascade
+
+`DELETE /chat/sessions/{session_id}` removes in order:
+1. Qdrant chunks for each document (`delete_document_chunks`)
+2. Files on disk
+3. Document DB records
+4. Messages (bulk SQL DELETE)
+5. Conversation summary
+6. The session itself
+
+### Frontend — Documents Panel
+
+A 260px right-side panel (`DocumentsPanelComponent`) attached to each chat session:
+- Drag & drop or file-picker upload (PDF, TXT, MD)
+- Document list with color-coded status badges
+- Per-document delete with confirmation
+- Automatically reloads when the active session changes
+
+Component: `frontend/src/app/components/documents-panel/`
+Service: `frontend/src/app/services/document.service.ts`
 
 ---
 
@@ -303,10 +421,17 @@ Application-level logging is configured in `backend/app/main.py` via `logging.ba
 
 Key log lines:
 ```
-INFO  app.services.chat_service    Building context with N messages (window=8, session=<uuid>)
-INFO  app.services.memory_service  Summary check: session=<uuid> unsummarized=N threshold=6
-INFO  app.services.memory_service  Summary triggered: session=<uuid> (unsummarized=N, threshold=6)
-INFO  app.services.memory_service  Summary updated: session=<uuid> summarized_count=N
+INFO  app.services.chat_service             Building context: N messages (window=6), summary=yes/no, session=<uuid>
+INFO  app.services.memory_service           Summary check: session=<uuid> unsummarized=N threshold=6
+INFO  app.services.memory_service           Summary triggered: session=<uuid> (unsummarized=N, threshold=6)
+INFO  app.services.memory_service           Summary updated: session=<uuid> summarized_count=N
+INFO  app.services.document_service         Document <uuid> uploaded: filename.pdf (N bytes)
+INFO  app.services.document_ingestion_service  Processing document <uuid> (filename.pdf)
+INFO  app.services.document_ingestion_service  Document <uuid>: text extracted (N chars)
+INFO  app.services.document_ingestion_service  Document <uuid>: N chunks generated
+INFO  app.services.document_ingestion_service  Document <uuid>: embeddings stored in Qdrant
+INFO  app.services.vector_store_service     Deleted Qdrant chunks for document <uuid>
+INFO  app.services.chat_service             Session <uuid> deleted
 ```
 
 ---
@@ -324,3 +449,6 @@ INFO  app.services.memory_service  Summary updated: session=<uuid> summarized_co
 | 2026-03-10 | Logging — logging.basicConfig en main.py, INFO en chat_service |
 | 2026-03-10 | Memoria de largo plazo — summarization via BackgroundTask, tabla conversation_summaries, memory_service |
 | 2026-03-10 | Timeout configurable para Ollama — OLLAMA_TIMEOUT env var, reemplaza hardcoded 120s |
+| 2026-03-11 | RAG pipeline (Stage 1) — document upload, chunking, embeddings, Qdrant; tabla documents, docker qdrant service |
+| 2026-03-11 | Documents panel Angular — drag & drop, status badges, delete por documento |
+| 2026-03-11 | Delete chat session — cascade completo: Qdrant chunks + archivos + mensajes + summary + sesión |
