@@ -13,7 +13,7 @@ from app.repositories import chat_repository, document_repository, summary_repos
 from app.router import model_router
 from app.schemas.chat_request import ChatRequest, CreateSessionRequest
 from app.schemas.chat_response import ChatResponse, MessageResponse, SessionResponse
-from app.services import memory_service, vector_store_service
+from app.services import memory_service, rag_service, vector_store_service
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,13 @@ def process_chat(
     Flow:
         1. Get or create chat session
         2. Fetch last N messages + existing summary for context (before saving current message)
-        3. Persist user message
-        4. Build context prompt (summary + recent history + user question)
-        5. Route prompt to AI model
-        6. Persist assistant response
-        7. Schedule background summary check
-        8. Return response with session ID
+        3. Retrieve relevant document chunks via RAG
+        4. Persist user message
+        5. Build context prompt (summary + RAG chunks + recent history + user question)
+        6. Route prompt to AI model
+        7. Persist assistant response
+        8. Schedule background summary check
+        9. Return response with session ID
     """
     # Step 1: resolve session
     if request.chat_session_id:
@@ -60,7 +61,13 @@ def process_chat(
         chat_session.id,
     )
 
-    # Step 3: persist user message
+    # Step 3: retrieve relevant document chunks via RAG
+    rag_chunks = rag_service.retrieve_relevant_chunks(
+        query=request.prompt,
+        chat_session_id=chat_session.id,
+    )
+
+    # Step 4: persist user message
     chat_repository.save_message(
         session=session,
         chat_session_id=chat_session.id,
@@ -68,13 +75,15 @@ def process_chat(
         content=request.prompt,
     )
 
-    # Step 4: build prompt with summary + recent history + user question
-    context_prompt = memory_service.build_context_prompt(history, summary_text, request.prompt)
+    # Step 5: build prompt (summary + RAG chunks + recent history + user question)
+    context_prompt = memory_service.build_context_prompt(
+        history, summary_text, rag_chunks, request.prompt
+    )
 
-    # Step 5: call AI model
+    # Step 6: call AI model
     ai_response = model_router.route(prompt=context_prompt, model=request.model)
 
-    # Step 6: persist assistant message
+    # Step 7: persist assistant message
     chat_repository.save_message(
         session=session,
         chat_session_id=chat_session.id,
@@ -82,7 +91,7 @@ def process_chat(
         content=ai_response,
     )
 
-    # Step 7: schedule summary check (runs after response is returned)
+    # Step 8: schedule summary check (runs after response is returned)
     background_tasks.add_task(
         memory_service.generate_summary_conditional,
         chat_session_id=chat_session.id,

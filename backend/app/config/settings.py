@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     uploads_dir: str = "/data/uploads"
     rag_chunk_size: int
     rag_chunk_overlap: int
+    rag_top_k: int = 5
+    rag_max_context_chars: int = 4000
 
     cors_origins: list[str] = ["http://localhost:4200"]
 

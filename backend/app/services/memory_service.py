@@ -14,13 +14,27 @@ logger = logging.getLogger(__name__)
 def build_context_prompt(
     history: list[Message],
     summary_text: str | None,
+    chunks: list[str],
     current_prompt: str,
 ) -> str:
-    """Build the full prompt sent to the model, combining summary + recent history + user question."""
+    """Build the full prompt sent to the model.
+
+    Five-layer structure:
+        1. System prompt
+        2. Conversation summary (if any)
+        3. Relevant document chunks from RAG (if any)
+        4. Recent conversation messages (if any)
+        5. User question
+    """
     parts = ["System:\nYou are a helpful AI assistant.\n"]
 
     if summary_text:
         parts.append(f"Conversation summary:\n{summary_text}\n")
+
+    if chunks:
+        parts.append("Relevant document context:\n")
+        for i, chunk in enumerate(chunks, start=1):
+            parts.append(f"[Chunk {i}]\n{chunk}\n")
 
     if history:
         parts.append("Recent conversation:\n")

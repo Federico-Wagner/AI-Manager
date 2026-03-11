@@ -17,6 +17,9 @@ Frontend (Angular)
         ↓
 Backend API (FastAPI)
         ↓
+   RAG Retrieval (rag_service)
+   └── Qdrant vector search (by session)
+        ↓
    Model Router
    ├── Local Model (Ollama / Llama 3)
    └── External Model (OpenAI / GPT-4o)
@@ -137,6 +140,7 @@ claude-ai-lab-V1/
 │   │   ├── services/
 │   │   │   ├── chat_service.py             # Chat orchestration + delete_session()
 │   │   │   ├── memory_service.py           # Prompt builder + background summary generation
+│   │   │   ├── rag_service.py              # RAG retrieval: embed query → Qdrant search → chunk selection
 │   │   │   ├── document_service.py         # Upload orchestration + delete (disk + Qdrant + DB)
 │   │   │   ├── document_ingestion_service.py # Pipeline: extract → chunk → embed → store
 │   │   │   └── vector_store_service.py     # Qdrant client wrapper
@@ -275,6 +279,8 @@ It is **not committed to version control** (add to `.gitignore`).
 | `UPLOADS_DIR` | `/data/uploads` | Host path inside backend container for uploaded files |
 | `RAG_CHUNK_SIZE` | `300` | Approximate token size per text chunk |
 | `RAG_CHUNK_OVERLAP` | `50` | Overlap between consecutive chunks (tokens) |
+| `RAG_TOP_K` | `5` | Number of Qdrant chunks retrieved per query |
+| `RAG_MAX_CONTEXT_CHARS` | `4000` | Character budget for RAG context injected into prompt |
 
 ---
 
@@ -291,8 +297,9 @@ It is **not committed to version control** (add to `.gitignore`).
 - [x] Session selector sidebar — list, switch, start, and **delete** chat sessions from the UI
 - [x] Document upload & RAG ingestion pipeline — upload PDF/TXT/MD per session, auto-chunk + embed + store in Qdrant
 - [x] Documents panel — drag & drop upload, document list with status badges, per-document delete
+- [x] RAG retrieval during chat (Stage 2) — query embedded, Qdrant searched per session, top chunks injected into prompt
 
-**Out of scope for MVP:** authentication, observability, RAG retrieval during chat (Stage 2).
+**Out of scope for MVP:** authentication, observability.
 
 ---
 
@@ -322,6 +329,12 @@ You are a helpful AI assistant.
 Conversation summary:          ← only if a summary exists
 <summary text>
 
+Relevant document context:     ← only if RAG chunks retrieved
+[Chunk 1]
+<chunk text>
+[Chunk 2]
+<chunk text>
+
 Recent conversation:           ← only if history is non-empty
 User: <message>
 Assistant: <message>
@@ -331,7 +344,7 @@ User question:
 <current prompt>
 ```
 
-Config: `backend/app/config/settings.py` → `chat_context_window`, `summary_trigger_messages`, `summary_max_tokens`
+Config: `backend/app/config/settings.py` → `chat_context_window`, `summary_trigger_messages`, `summary_max_tokens`, `rag_top_k`, `rag_max_context_chars`
 
 ---
 
@@ -415,6 +428,34 @@ Service: `frontend/src/app/services/document.service.ts`
 
 ---
 
+## RAG Retrieval During Chat
+
+When a user sends a message, the backend embeds the query using the same `all-MiniLM-L6-v2` model used during ingestion, queries Qdrant for the most relevant chunks belonging to the current session, and injects them into the LLM prompt between the conversation summary and the recent history.
+
+### Retrieval Flow
+
+```
+User prompt
+        ↓
+rag_service.retrieve_relevant_chunks()
+        ↓
+  1. Embed query → 384-dim vector (shared _get_model() singleton)
+  2. Qdrant search — filter by chat_session_id, limit=RAG_TOP_K
+  3. Apply RAG_MAX_CONTEXT_CHARS character budget
+  4. Return selected chunks ([] on any error — graceful degradation)
+        ↓
+Chunks injected as "Relevant document context" layer in prompt
+        ↓
+LLM responds with document-grounded answer
+```
+
+If Qdrant is unavailable or no documents have been uploaded for the session, `retrieve_relevant_chunks()` returns `[]` and the chat proceeds normally.
+
+Config: `RAG_TOP_K`, `RAG_MAX_CONTEXT_CHARS` in `docker-local.env`.
+Implementation: `backend/app/services/rag_service.py`.
+
+---
+
 ## Logging
 
 Application-level logging is configured in `backend/app/main.py` via `logging.basicConfig(level=INFO)`.
@@ -430,6 +471,7 @@ INFO  app.services.document_ingestion_service  Processing document <uuid> (filen
 INFO  app.services.document_ingestion_service  Document <uuid>: text extracted (N chars)
 INFO  app.services.document_ingestion_service  Document <uuid>: N chunks generated
 INFO  app.services.document_ingestion_service  Document <uuid>: embeddings stored in Qdrant
+INFO  app.services.rag_service             RAG retrieval: session=<uuid> retrieved=N selected=N
 INFO  app.services.vector_store_service     Deleted Qdrant chunks for document <uuid>
 INFO  app.services.chat_service             Session <uuid> deleted
 ```
@@ -452,3 +494,4 @@ INFO  app.services.chat_service             Session <uuid> deleted
 | 2026-03-11 | RAG pipeline (Stage 1) — document upload, chunking, embeddings, Qdrant; tabla documents, docker qdrant service |
 | 2026-03-11 | Documents panel Angular — drag & drop, status badges, delete por documento |
 | 2026-03-11 | Delete chat session — cascade completo: Qdrant chunks + archivos + mensajes + summary + sesión |
+| 2026-03-11 | RAG retrieval (Stage 2) — rag_service.py, search_chunks(), 5-layer prompt, RAG_TOP_K / RAG_MAX_CONTEXT_CHARS |

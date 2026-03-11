@@ -54,6 +54,29 @@ def upsert_chunks(
     client.upsert(collection_name=COLLECTION_NAME, points=points)
 
 
+def search_chunks(
+    query_vector: list[float],
+    chat_session_id: UUID,
+    top_k: int,
+) -> list[str]:
+    """Return the text of the top-k most relevant chunks for this session."""
+    client = _get_client()
+    results = client.search(
+        collection_name=COLLECTION_NAME,
+        query_vector=query_vector,
+        query_filter=Filter(
+            must=[
+                FieldCondition(
+                    key="chat_session_id",
+                    match=MatchValue(value=str(chat_session_id)),
+                )
+            ]
+        ),
+        limit=top_k,
+    )
+    return [hit.payload["text"] for hit in results if hit.payload]
+
+
 def delete_document_chunks(document_id: UUID) -> None:
     """Remove all Qdrant points belonging to a document."""
     client = _get_client()
