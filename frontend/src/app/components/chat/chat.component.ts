@@ -89,6 +89,26 @@ export class ChatComponent implements OnInit, AfterViewChecked {
       });
   }
 
+  deleteSession(session: Session, event: MouseEvent): void {
+    event.stopPropagation(); // prevent triggering selectSession
+    if (
+      !window.confirm(
+        `Delete "${session.title}"?\nThis will also remove all uploaded documents.`
+      )
+    ) return;
+
+    this.chatService.deleteSession(session.id).subscribe({
+      next: () => {
+        if (this.currentSessionId === session.id) {
+          this.currentSessionId = undefined;
+          this.messages = [];
+        }
+        this.loadSessions();
+      },
+      error: (err) => console.error('Delete session failed:', err),
+    });
+  }
+
   /** Send on Enter; allow Shift+Enter for newlines. */
   onEnterKey(event: Event): void {
     const keyEvent = event as KeyboardEvent;

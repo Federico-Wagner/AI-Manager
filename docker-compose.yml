@@ -16,10 +16,14 @@ services:
       - "8000:8000"
     env_file:
       - docker-local.env
+    volumes:
+      - uploads_data:/data/uploads
     depends_on:
       postgres:
         condition: service_healthy
       ollama:
+        condition: service_started
+      qdrant:
         condition: service_started
     networks:
       - public
@@ -53,9 +57,21 @@ services:
     expose:
       - "11434"
 
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - internal
+      - public #for dashboard
+
 volumes:
   postgres_data:
   ollama_data:
+  qdrant_data:
+  uploads_data:
 
 networks:
   public:

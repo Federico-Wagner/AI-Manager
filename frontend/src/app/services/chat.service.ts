@@ -43,4 +43,11 @@ export class ChatService {
   createSession(title: string): Observable<Session> {
     return this.http.post<Session>(`${this.apiUrl}/chat/sessions`, { title });
   }
+
+  /** Delete a chat session and all associated data. */
+  deleteSession(sessionId: string): Observable<{ message: string }> {
+    return this.http.delete<{ message: string }>(
+      `${this.apiUrl}/chat/sessions/${sessionId}`
+    );
+  }
 }

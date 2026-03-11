@@ -43,3 +43,12 @@ def get_session_messages(
 ) -> list[MessageResponse]:
     """Return all messages from a chat session in chronological order."""
     return chat_service.get_session_messages(session=session, chat_session_id=session_id)
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(
+    session_id: Annotated[UUID, Path(description="The chat session ID")],
+    session: SessionDep,
+) -> dict:
+    """Delete a chat session and all associated data (messages, summary, documents, vector chunks)."""
+    return chat_service.delete_session(session=session, session_id=session_id)

@@ -1,15 +1,19 @@
 import logging
+import os
 from uuid import UUID
 
 from fastapi import BackgroundTasks
-from sqlmodel import Session
+from sqlmodel import Session, delete as sql_delete
 
 from app.config.settings import settings
-from app.repositories import chat_repository, summary_repository
+from app.models.chat_session import ChatSession
+from app.models.conversation_summary import ConversationSummary
+from app.models.message import Message
+from app.repositories import chat_repository, document_repository, summary_repository
 from app.router import model_router
 from app.schemas.chat_request import ChatRequest, CreateSessionRequest
 from app.schemas.chat_response import ChatResponse, MessageResponse, SessionResponse
-from app.services import memory_service
+from app.services import memory_service, vector_store_service
 
 logger = logging.getLogger(__name__)
 
@@ -121,3 +125,50 @@ def get_session_messages(session: Session, chat_session_id: UUID) -> list[Messag
         )
         for m in messages
     ]
+
+
+def delete_session(session: Session, session_id: UUID) -> dict:
+    """Delete a chat session and all associated data.
+
+    Deletion order:
+        1. All documents — Qdrant chunks + file on disk + DB record
+        2. All messages (bulk delete)
+        3. Conversation summary (if exists)
+        4. The session itself
+    """
+    chat_repository.get_session_by_id(session, session_id)  # raises 404 if missing
+
+    # Delete documents (vector chunks + files + DB records)
+    docs = document_repository.get_session_documents(session, session_id)
+    for doc in docs:
+        vector_store_service.delete_document_chunks(doc.id)
+        _delete_doc_files(doc.storage_path)
+        document_repository.delete_document(session, doc.id)
+
+    # Bulk delete messages
+    session.exec(sql_delete(Message).where(Message.chat_session_id == session_id))
+
+    # Delete summary if present
+    existing_summary = summary_repository.get_summary(session, session_id)
+    if existing_summary:
+        session.delete(existing_summary)
+
+    # Delete session
+    chat_session = session.get(ChatSession, session_id)
+    session.delete(chat_session)
+    session.commit()
+
+    logger.info("Session %s deleted", session_id)
+    return {"message": "deleted"}
+
+
+def _delete_doc_files(storage_path: str) -> None:
+    """Remove a document file and its parent directory (best-effort)."""
+    try:
+        if os.path.exists(storage_path):
+            os.remove(storage_path)
+        parent = os.path.dirname(storage_path)
+        if os.path.isdir(parent) and not os.listdir(parent):
+            os.rmdir(parent)
+    except OSError as e:
+        logger.warning("Could not remove file %s: %s", storage_path, e)

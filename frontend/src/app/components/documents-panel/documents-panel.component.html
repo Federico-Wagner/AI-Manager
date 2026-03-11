@@ -1,0 +1,73 @@
+<div class="documents-panel">
+
+  <div class="panel-header">
+    <span class="panel-title">Documents</span>
+  </div>
+
+  <!-- No session selected -->
+  <div *ngIf="!sessionId" class="panel-empty">
+    Select a chat session to manage documents.
+  </div>
+
+  <ng-container *ngIf="sessionId">
+
+    <!-- Drop zone / Upload area -->
+    <div
+      class="drop-zone"
+      [class.dragging]="isDragging"
+      (dragover)="onDragOver($event)"
+      (dragleave)="onDragLeave()"
+      (drop)="onDrop($event)"
+    >
+      <span class="drop-icon">📄</span>
+      <span class="drop-text">Drop a file here</span>
+      <span class="drop-hint">or</span>
+      <label class="upload-btn">
+        <input
+          type="file"
+          accept=".pdf,.txt,.md"
+          (change)="onFileSelected($event)"
+          style="display:none"
+        />
+        Choose file
+      </label>
+      <span class="drop-hint">PDF, TXT, MD</span>
+    </div>
+
+    <!-- Uploading indicator -->
+    <div *ngIf="isUploading" class="uploading-row">
+      <span class="spinner"></span> Uploading…
+    </div>
+
+    <!-- Error message -->
+    <div *ngIf="errorMessage" class="error-banner">
+      {{ errorMessage }}
+    </div>
+
+    <!-- Document list -->
+    <ul *ngIf="documents.length > 0" class="document-list">
+      <li *ngFor="let doc of documents" class="document-item">
+        <span class="doc-icon">📎</span>
+        <div class="doc-info">
+          <span class="doc-name" [title]="doc.file_name">{{ doc.file_name }}</span>
+          <span class="doc-status" [class]="'status-' + doc.status">
+            {{ statusLabel(doc.status) }}
+          </span>
+        </div>
+        <button
+          class="delete-btn"
+          (click)="confirmDelete(doc)"
+          title="Delete document"
+        >
+          🗑
+        </button>
+      </li>
+    </ul>
+
+    <div *ngIf="documents.length === 0 && !isUploading" class="panel-empty">
+      No documents yet.
+    </div>
+
+  </ng-container>
+
+</div>

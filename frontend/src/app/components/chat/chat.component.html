@@ -14,7 +14,12 @@
         (click)="selectSession(s)"
         [title]="s.title"
       >
-        {{ s.title }}
+        <span class="session-label">{{ s.title }}</span>
+        <button
+          class="session-delete-btn"
+          (click)="deleteSession(s, $event)"
+          title="Delete chat"
+        >✕</button>
       </li>
     </ul>
     <div *ngIf="sessions.length === 0" class="sidebar-empty">No chats yet</div>
@@ -75,5 +80,8 @@
 
     </div>
   </div>
+
+  <!-- ── Documents panel ── -->
+  <app-documents-panel [sessionId]="currentSessionId"></app-documents-panel>
 
 </div>
