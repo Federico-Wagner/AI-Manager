@@ -9,7 +9,7 @@ from app.config.settings import settings
 from app.models.chat_session import ChatSession
 from app.models.conversation_summary import ConversationSummary
 from app.models.message import Message
-from app.repositories import chat_repository, document_repository, summary_repository
+from app.repositories import chat_repository, document_repository, llm_call_repository, summary_repository
 from app.router import model_router
 from app.schemas.chat_request import ChatRequest, CreateSessionRequest
 from app.schemas.chat_response import ChatResponse, MessageResponse, SessionResponse
@@ -33,8 +33,9 @@ def process_chat(
         5. Build context prompt (summary + RAG chunks + recent history + user question)
         6. Route prompt to AI model
         7. Persist assistant response
-        8. Schedule background summary check
-        9. Return response with session ID
+        8. Log LLM call (non-blocking)
+        9. Schedule background summary check
+        10. Return response with session ID
     """
     # Step 1: resolve session
     if request.chat_session_id:
@@ -66,6 +67,7 @@ def process_chat(
         query=request.prompt,
         chat_session_id=chat_session.id,
     )
+    chunk_texts = [c["text"] for c in rag_chunks]
 
     # Step 4: persist user message
     chat_repository.save_message(
@@ -77,7 +79,7 @@ def process_chat(
 
     # Step 5: build prompt (summary + RAG chunks + recent history + user question)
     context_prompt = memory_service.build_context_prompt(
-        history, summary_text, rag_chunks, request.prompt
+        history, summary_text, chunk_texts, request.prompt
     )
 
     # Step 6: call AI model
@@ -91,7 +93,15 @@ def process_chat(
         content=ai_response,
     )
 
-    # Step 8: schedule summary check (runs after response is returned)
+    # Step 8: log LLM call (non-blocking — must not break chat)
+    llm_call_repository.save_and_limit_persisted_llm_call(
+        session=session,
+        chat_session_id=chat_session.id,
+        final_prompt=context_prompt,
+        model_name=request.model,
+    )
+
+    # Step 9: schedule summary check (runs after response is returned)
     background_tasks.add_task(
         memory_service.generate_summary_conditional,
         chat_session_id=chat_session.id,

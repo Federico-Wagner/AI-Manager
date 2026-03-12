@@ -92,6 +92,14 @@ PostgreSQL (chat persistence)
 - status (uploaded | processing | processed | failed)
 - created_at
 
+`llm_calls`
+- id
+- chat_session_id
+- final_prompt (full text sent to the model)
+- model_name
+- created_at
+- **Retention policy:** only the 10 newest rows are kept globally (older rows auto-deleted after each insert)
+
 #### Qdrant Collection
 
 `documents_chunks`
@@ -152,12 +160,14 @@ claude-ai-lab-V1/
 │   │   ├── repositories/
 │   │   │   ├── chat_repository.py          # All DB read/write for chat
 │   │   │   ├── summary_repository.py       # get/upsert conversation_summaries
-│   │   │   └── document_repository.py      # CRUD for documents table
+│   │   │   ├── document_repository.py      # CRUD for documents table
+│   │   │   └── llm_call_repository.py      # save_and_limit_persisted_llm_call() — inserts + auto-trims to 10 rows
 │   │   ├── models/
 │   │   │   ├── chat_session.py             # SQLModel table: chat_sessions
 │   │   │   ├── message.py                  # SQLModel table: messages
 │   │   │   ├── conversation_summary.py     # SQLModel table: conversation_summaries
-│   │   │   └── document.py                 # SQLModel table: documents
+│   │   │   ├── document.py                 # SQLModel table: documents
+│   │   │   └── llm_call.py                 # SQLModel table: llm_calls
 │   │   ├── schemas/
 │   │   │   ├── chat_request.py             # Pydantic request models
 │   │   │   ├── chat_response.py            # Pydantic response models
@@ -298,8 +308,9 @@ It is **not committed to version control** (add to `.gitignore`).
 - [x] Document upload & RAG ingestion pipeline — upload PDF/TXT/MD per session, auto-chunk + embed + store in Qdrant
 - [x] Documents panel — drag & drop upload, document list with status badges, per-document delete
 - [x] RAG retrieval during chat (Stage 2) — query embedded, Qdrant searched per session, top chunks injected into prompt
+- [x] LLM call logging — final prompt + model stored in `llm_calls` table, auto-retained to last 10 rows globally
 
-**Out of scope for MVP:** authentication, observability.
+**Out of scope for MVP:** authentication.
 
 ---
 
@@ -428,6 +439,24 @@ Service: `frontend/src/app/services/document.service.ts`
 
 ---
 
+## LLM Call Logging
+
+After each LLM response, the backend stores a lightweight observability record in the `llm_calls` table. An immediate cleanup query trims the table to the **10 newest rows globally**, so storage footprint is fixed and tiny.
+
+Fields stored per call: `chat_session_id`, `final_prompt` (the full assembled prompt), `model_name`, `created_at`.
+
+Implementation: `backend/app/repositories/llm_call_repository.py` → `save_and_limit_persisted_llm_call()`.
+
+Retention SQL (runs after every insert):
+```sql
+DELETE FROM llm_calls
+WHERE id NOT IN (
+    SELECT id FROM llm_calls ORDER BY created_at DESC LIMIT 10
+);
+```
+
+---
+
 ## RAG Retrieval During Chat
 
 When a user sends a message, the backend embeds the query using the same `all-MiniLM-L6-v2` model used during ingestion, queries Qdrant for the most relevant chunks belonging to the current session, and injects them into the LLM prompt between the conversation summary and the recent history.
@@ -472,6 +501,8 @@ INFO  app.services.document_ingestion_service  Document <uuid>: text extracted (
 INFO  app.services.document_ingestion_service  Document <uuid>: N chunks generated
 INFO  app.services.document_ingestion_service  Document <uuid>: embeddings stored in Qdrant
 INFO  app.services.rag_service             RAG retrieval: session=<uuid> retrieved=N selected=N
+DEBUG app.repositories.llm_call_repository LLM call stored: model=<model> rag_chunks=N
+DEBUG app.repositories.llm_call_repository Cleanup executed: remaining_calls=10
 INFO  app.services.vector_store_service     Deleted Qdrant chunks for document <uuid>
 INFO  app.services.chat_service             Session <uuid> deleted
 ```
@@ -495,3 +526,4 @@ INFO  app.services.chat_service             Session <uuid> deleted
 | 2026-03-11 | Documents panel Angular — drag & drop, status badges, delete por documento |
 | 2026-03-11 | Delete chat session — cascade completo: Qdrant chunks + archivos + mensajes + summary + sesión |
 | 2026-03-11 | RAG retrieval (Stage 2) — rag_service.py, search_chunks(), 5-layer prompt, RAG_TOP_K / RAG_MAX_CONTEXT_CHARS |
+| 2026-03-11 | LLM call logging — llm_calls table, save_and_limit_persisted_llm_call(), 10-row global retention; fix qdrant client.search() → query_points() |

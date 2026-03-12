@@ -58,12 +58,12 @@ def search_chunks(
     query_vector: list[float],
     chat_session_id: UUID,
     top_k: int,
-) -> list[str]:
-    """Return the text of the top-k most relevant chunks for this session."""
+) -> list[dict]:
+    """Return the top-k most relevant chunks for this session with metadata."""
     client = _get_client()
-    results = client.search(
+    response = client.query_points(
         collection_name=COLLECTION_NAME,
-        query_vector=query_vector,
+        query=query_vector,
         query_filter=Filter(
             must=[
                 FieldCondition(
@@ -74,7 +74,11 @@ def search_chunks(
         ),
         limit=top_k,
     )
-    return [hit.payload["text"] for hit in results if hit.payload]
+    return [
+        {"chunk_id": str(hit.id), "score": round(hit.score, 4), "text": hit.payload["text"]}
+        for hit in response.points
+        if hit.payload
+    ]
 
 
 def delete_document_chunks(document_id: UUID) -> None:
