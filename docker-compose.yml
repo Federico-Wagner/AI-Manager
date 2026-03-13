@@ -5,6 +5,17 @@ services:
     ports:
       - "4200:80"
     depends_on:
+      - bff-service
+    networks:
+      - public
+
+  bff-service:
+    build: ./services/bff-service
+    ports:
+      - "8000:8000"
+    env_file:
+      - docker-local.env
+    depends_on:
       - chat-service
     networks:
       - public
@@ -12,8 +23,6 @@ services:
 
   chat-service:
     build: ./services/chat-service
-    ports:
-      - "8000:8000"
     env_file:
       - docker-local.env
     volumes:
@@ -24,7 +33,6 @@ services:
       ai-platform-service:
         condition: service_started
     networks:
-      - public
       - internal
 
   ai-platform-service:

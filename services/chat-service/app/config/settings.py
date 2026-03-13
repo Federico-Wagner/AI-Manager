@@ -23,9 +23,6 @@ class Settings(BaseSettings):
     # File uploads
     uploads_dir: str = "/data/uploads"
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:4200"]
-
     @property
     def database_url(self) -> str:
         return (

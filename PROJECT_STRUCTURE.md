@@ -5,15 +5,21 @@
 ```
 Browser / Frontend (Angular, port 4200)
            │
+           ▼  HTTP (public network)
+  ┌─────────────────┐
+  │   BFF Service   │  port 8000  — public API gateway
+  │   (FastAPI)     │
+  └────────┬────────┘
+           │ HTTP (internal Docker network)
            ▼
   ┌─────────────────┐
-  │  Chat Service   │  port 8000  — conversation management
+  │  Chat Service   │  internal only  — conversation management
   │  (FastAPI)      │
   └────────┬────────┘
            │ HTTP (internal Docker network)
            ▼
   ┌──────────────────────┐
-  │  AI Platform Service │  port 8001  — LLM, RAG, embeddings
+  │  AI Platform Service │  internal only  — LLM, RAG, embeddings
   │  (FastAPI)           │
   └──┬───────────────────┘
      │              │
@@ -31,7 +37,23 @@ claude-ai-lab-V1/
 │
 ├── services/
 │   │
-│   ├── chat-service/               # Conversation management
+│   ├── bff-service/               # Public API gateway (BFF)
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── app/
+│   │       ├── main.py                     # FastAPI app + CORS + lifespan (AsyncClient)
+│   │       ├── config/
+│   │       │   └── settings.py             # chat_service_url, cors_origins
+│   │       ├── clients/
+│   │       │   └── chat_service_client.py  # Async httpx proxy functions (all 8 endpoints)
+│   │       ├── routers/
+│   │       │   ├── chat_router.py          # /chat/* proxy endpoints
+│   │       │   └── document_router.py      # /sessions/* proxy endpoints
+│   │       └── schemas/
+│   │           ├── chat_schemas.py         # ChatRequest, ChatResponse, SessionResponse, MessageResponse
+│   │           └── document_schemas.py     # DocumentUploadResponse, DocumentResponse
+│   │
+│   ├── chat-service/               # Conversation management (internal only)
 │   │   ├── Dockerfile
 │   │   ├── requirements.txt
 │   │   └── app/
@@ -65,7 +87,7 @@ claude-ai-lab-V1/
 │   │           ├── memory_service.py       # summary generation (calls AI Platform)
 │   │           └── document_service.py     # file save + AI Platform ingest trigger
 │   │
-│   └── ai-platform-service/        # AI infrastructure
+│   └── ai-platform-service/        # AI infrastructure (internal only)
 │       ├── Dockerfile
 │       ├── requirements.txt
 │       └── app/
@@ -106,17 +128,30 @@ claude-ai-lab-V1/
 
 ## Service Responsibilities
 
-### Chat Service (port 8000)
+### BFF Service (port 8000, public-facing)
+
+**Does:**
+- Receive all requests from the Angular frontend
+- Own CORS configuration (the only service with CORS middleware for browser traffic)
+- Proxy requests to Chat Service via async httpx
+- Log all incoming requests and forwarded calls
+- Return 503 if Chat Service is unreachable
+
+**Does NOT:** contain business logic, talk to databases, or reach AI Platform directly
+
+---
+
+### Chat Service (internal only)
 
 **Owns:** `chat_sessions`, `messages`, `conversation_summaries`, `documents` tables in **postgres-chat**
 
 **Does:**
-- Receive messages from frontend
+- Receive messages from BFF
 - Persist user/assistant messages
 - Manage chat sessions and document metadata
 - Call AI Platform for LLM responses and document ingestion
 - Trigger summary generation (via AI Platform)
-- Return AI responses to frontend
+- Return AI responses to BFF
 
 **Does NOT:** talk to Qdrant, Ollama, or OpenAI directly
 
@@ -133,6 +168,28 @@ claude-ai-lab-V1/
 - Log every prompt+response pair to `llm_calls` (last 10 retained)
 - Process document uploads (extract text → chunk → embed → store in Qdrant)
 - Callback to Chat Service when ingestion completes
+
+---
+
+## BFF Endpoints (proxy layer)
+
+### Chat (`chat_router.py`, prefix `/chat`)
+
+| Method | Path | Proxies to Chat Service |
+|--------|------|-------------------------|
+| `POST` | `/chat/` | POST /chat/ |
+| `GET` | `/chat/sessions` | GET /chat/sessions |
+| `POST` | `/chat/sessions` | POST /chat/sessions |
+| `GET` | `/chat/sessions/{session_id}` | GET /chat/sessions/{session_id} |
+| `DELETE` | `/chat/sessions/{session_id}` | DELETE /chat/sessions/{session_id} |
+
+### Documents (`document_router.py`, prefix `/sessions`)
+
+| Method | Path | Proxies to Chat Service |
+|--------|------|-------------------------|
+| `POST` | `/sessions/{session_id}/documents` | POST /sessions/{session_id}/documents |
+| `GET` | `/sessions/{session_id}/documents` | GET /sessions/{session_id}/documents |
+| `DELETE` | `/sessions/documents/{document_id}` | DELETE /sessions/documents/{document_id} |
 
 ---
 
@@ -174,21 +231,35 @@ claude-ai-lab-V1/
 ## Inter-Service Communication
 
 ```
-Chat Service ──────────────────────────────────► AI Platform
+Frontend ──────────────────────────────────────────► BFF Service
+  all chat + document requests
+
+BFF Service ───────────────────────────────────────► Chat Service
+  all 8 proxied endpoints
+
+Chat Service ──────────────────────────────────────► AI Platform
   generate_chat_response()       POST /ai/generate-chat-response
   generate_response()            POST /ai/generate-response
   ingest_document()              POST /documents/ingest-document
   delete_document_chunks()       DELETE /documents/{id}/chunks
 
-AI Platform ───────────────────────────────────► Chat Service
+AI Platform ───────────────────────────────────────► Chat Service
   (after ingestion completes)    PATCH /internal/documents/{id}/status
 ```
 
-Error handling: if AI Platform is unreachable, Chat Service returns a fallback message and logs the error. The chat system never crashes due to AI Platform unavailability.
+Error handling: if Chat Service is unreachable, BFF returns HTTP 503. If AI Platform is unreachable, Chat Service returns a fallback message. Neither crash due to downstream unavailability.
 
 ---
 
 ## Environment Variables
+
+### BFF Service
+
+| Variable | Description |
+|----------|-------------|
+| `CHAT_SERVICE_URL` | `http://chat-service:8000` |
+| `CHAT_SERVICE_TIMEOUT` | HTTP timeout for chat calls (seconds) |
+| `CORS_ORIGINS` | Allowed frontend origins |
 
 ### Chat Service
 
@@ -201,7 +272,6 @@ Error handling: if AI Platform is unreachable, Chat Service returns a fallback m
 | `SUMMARY_TRIGGER_MESSAGES` | Unsummarized messages before summary runs |
 | `SUMMARY_MAX_TOKENS` | Max tokens in generated summary |
 | `UPLOADS_DIR` | `/data/uploads` |
-| `CORS_ORIGINS` | Allowed frontend origins |
 
 ### AI Platform Service
 
@@ -225,11 +295,12 @@ Error handling: if AI Platform is unreachable, Chat Service returns a fallback m
 | Service | Image | Port | Network |
 |---------|-------|------|---------|
 | `frontend` | custom | 4200 | public + internal |
-| `chat-service` | custom | 8000 | public + internal |
+| `bff-service` | custom | 8000 | public + internal |
+| `chat-service` | custom | — (internal only) | internal |
 | `ai-platform-service` | custom | 8001 | internal only |
-| `postgres-chat` | postgres:15 | 5432 | internal |
-| `postgres-ai` | postgres:15 | 5433→5432 | internal |
-| `ollama` | ollama/ollama | 11434 (exposed) | internal |
+| `postgres-chat` | postgres:15 | 5432 | public + internal |
+| `postgres-ai` | postgres:15 | 5433→5432 | public + internal |
+| `ollama` | ollama/ollama | internal only | internal |
 | `qdrant` | qdrant/qdrant | 6333 | internal + public (dashboard) |
 
 Shared volume `uploads_data` is mounted at `/data/uploads` on both `chat-service` and `ai-platform-service`.

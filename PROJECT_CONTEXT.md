@@ -10,12 +10,14 @@ Runs fully locally, no authentication, focused on validating the architecture.
 
 ## Arquitectura
 
-Two-service architecture: Chat Service handles conversation management; AI Platform Service handles all AI/ML infrastructure.
+Three-service architecture: BFF Service is the public gateway; Chat Service handles conversation management; AI Platform Service handles all AI/ML infrastructure.
 
 ```
 Frontend (Angular, port 4200)
         ↓
-Chat Service (FastAPI, port 8000)
+BFF Service (FastAPI, port 8000)  ← public gateway
+        ↓  HTTP (internal Docker network)
+Chat Service (FastAPI, internal only)
    ├── chat_sessions, messages, conversation_summaries, documents (postgres-chat)
    └── ai_platform_client.py
         ↓  HTTP (internal Docker network)
@@ -113,15 +115,19 @@ See `PROJECT_STRUCTURE.md` for full file tree and endpoint reference.
 ```
 User writes prompt in Angular UI
         ↓
-POST /chat
+POST /chat  (→ BFF Service)
         ↓
-FastAPI Backend
+BFF proxies request to Chat Service
+        ↓
+Chat Service orchestrates
+        ↓
+AI Platform Service
         ↓
    Model Router
    ├── Ollama (local)
    └── OpenAI API (external)
         ↓
-Response returned to frontend
+Response returned through Chat Service → BFF → frontend
         ↓
 Message saved in PostgreSQL
 ```
@@ -140,6 +146,23 @@ Message saved in PostgreSQL
 
 ```
 claude-ai-lab-V1/
+├── services/
+│   ├── bff-service/                    # Public API gateway (BFF)
+│   │   ├── app/
+│   │   │   ├── main.py                 # FastAPI app + CORS + lifespan (AsyncClient)
+│   │   │   ├── config/settings.py      # CHAT_SERVICE_URL, cors_origins
+│   │   │   ├── clients/
+│   │   │   │   └── chat_service_client.py  # Async httpx proxy functions
+│   │   │   ├── routers/
+│   │   │   │   ├── chat_router.py      # /chat/* endpoints
+│   │   │   │   └── document_router.py  # /sessions/* endpoints
+│   │   │   └── schemas/
+│   │   │       ├── chat_schemas.py
+│   │   │       └── document_schemas.py
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   ├── chat-service/                   # Conversation management (internal)
+│   └── ai-platform-service/            # AI/ML infrastructure (internal)
 ├── backend/
 │   ├── app/
 │   │   ├── api/
@@ -229,13 +252,16 @@ The entire application is **dockerized**. All services are managed via **Docker 
 
 ### Services
 
-| Service    | Description                        | Port exposed | Networks           |
-|------------|------------------------------------|--------------|--------------------|
-| `frontend` | Angular app (served via Nginx)     | 4200         | public, internal   |
-| `backend`  | FastAPI Python API                 | 8000         | public, internal   |
-| `postgres` | PostgreSQL database                | 5432         | public, internal   |
-| `ollama`   | Local LLM runtime                  | internal only| internal           |
-| `qdrant`   | Vector database                    | 6333         | internal           |
+| Service               | Description                        | Port exposed | Networks           |
+|-----------------------|------------------------------------|--------------|--------------------|-
+| `frontend`            | Angular app (served via Nginx)     | 4200         | public, internal   |
+| `bff-service`         | BFF — public API gateway           | 8000         | public, internal   |
+| `chat-service`        | FastAPI conversation management    | internal only| internal           |
+| `ai-platform-service` | FastAPI AI/ML infrastructure       | internal only| internal           |
+| `postgres-chat`       | PostgreSQL (chat data)             | 5432         | public, internal   |
+| `postgres-ai`         | PostgreSQL (LLM call logs)         | 5433         | public, internal   |
+| `ollama`              | Local LLM runtime                  | internal only| internal           |
+| `qdrant`              | Vector database                    | 6333         | internal, public   |
 
 All services run locally via a single `docker-compose.yml`.
 
@@ -547,3 +573,4 @@ INFO  app.services.vector_store_service      Deleted Qdrant chunks for document 
 | 2026-03-11 | LLM call logging — llm_calls table, save_and_limit_persisted_llm_call(), 10-row global retention; fix qdrant client.search() → query_points() |
 | 2026-03-12 | Service architecture refactor — monolith split into Chat Service (port 8000) + AI Platform Service (port 8001); two postgres instances; ai_platform_client.py; internal status callback; llm_calls adds ai_response column; PROJECT_STRUCTURE.md created |
 | 2026-03-12 | AI Platform controller split — ai_controller.py split into llm_controller.py (prefix /ai) and document_controller.py (prefix /documents); chat-service client updated to new document routes; prompt_builder typo fix (last_mesages → last_messages) |
+| 2026-03-12 | BFF Service introduced — thin proxy gateway on port 8000; chat-service moved to internal-only network; CORS ownership transferred to BFF; frontend unchanged |
