@@ -10,3 +10,4 @@ __pycache__/
 frontend/node_modules
 
 TO_DO_List.md
+.playwright-mcp/

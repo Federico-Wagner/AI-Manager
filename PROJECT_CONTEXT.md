@@ -10,28 +10,30 @@ Runs fully locally, no authentication, focused on validating the architecture.
 
 ## Arquitectura
 
-Simple unified backend (no BFF separation).
+Three-service architecture: BFF Service is the public gateway; Chat Service handles conversation management; AI Platform Service handles all AI/ML infrastructure.
 
 ```
-Frontend (Angular)
+Frontend (Angular, port 4200)
         ↓
-Backend API (FastAPI)
-        ↓
-   RAG Retrieval (rag_service)
-   └── Qdrant vector search (by session)
-        ↓
-   Model Router
-   ├── Local Model (Ollama / Llama 3)
-   └── External Model (OpenAI / GPT-4o)
-        ↓
-PostgreSQL (chat persistence)
-        ↓
-   Document Pipeline (RAG Stage 1)
-   ├── File storage  (/data/uploads)
-   ├── Text extraction + chunking
-   ├── Embeddings (sentence-transformers)
-   └── Qdrant (vector database)
+BFF Service (FastAPI, port 8000)  ← public gateway
+        ↓  HTTP (internal Docker network)
+Chat Service (FastAPI, internal only)
+   ├── chat_sessions, messages, conversation_summaries, documents (postgres-chat)
+   └── ai_platform_client.py
+        ↓  HTTP (internal Docker network)
+AI Platform Service (FastAPI, port 8001)
+   ├── RAG retrieval (rag_service → Qdrant)
+   ├── Prompt builder (5-layer)
+   ├── Model Router
+   │   ├── Local Model (Ollama / Llama 3)
+   │   └── External Model (OpenAI / GPT-4o)
+   ├── LLM call logging (llm_calls, postgres-ai)
+   └── Document ingestion (embed → Qdrant)
+        ↓  status callback
+Chat Service PATCH /internal/documents/{id}/status
 ```
+
+See `PROJECT_STRUCTURE.md` for full file tree and endpoint reference.
 
 ---
 
@@ -113,15 +115,19 @@ PostgreSQL (chat persistence)
 ```
 User writes prompt in Angular UI
         ↓
-POST /chat
+POST /chat  (→ BFF Service)
         ↓
-FastAPI Backend
+BFF proxies request to Chat Service
+        ↓
+Chat Service orchestrates
+        ↓
+AI Platform Service
         ↓
    Model Router
    ├── Ollama (local)
    └── OpenAI API (external)
         ↓
-Response returned to frontend
+Response returned through Chat Service → BFF → frontend
         ↓
 Message saved in PostgreSQL
 ```
@@ -140,6 +146,23 @@ Message saved in PostgreSQL
 
 ```
 claude-ai-lab-V1/
+├── services/
+│   ├── bff-service/                    # Public API gateway (BFF)
+│   │   ├── app/
+│   │   │   ├── main.py                 # FastAPI app + CORS + lifespan (AsyncClient)
+│   │   │   ├── config/settings.py      # CHAT_SERVICE_URL, cors_origins
+│   │   │   ├── clients/
+│   │   │   │   └── chat_service_client.py  # Async httpx proxy functions
+│   │   │   ├── routers/
+│   │   │   │   ├── chat_router.py      # /chat/* endpoints
+│   │   │   │   └── document_router.py  # /sessions/* endpoints
+│   │   │   └── schemas/
+│   │   │       ├── chat_schemas.py
+│   │   │       └── document_schemas.py
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   ├── chat-service/                   # Conversation management (internal)
+│   └── ai-platform-service/            # AI/ML infrastructure (internal)
 ├── backend/
 │   ├── app/
 │   │   ├── api/
@@ -229,13 +252,16 @@ The entire application is **dockerized**. All services are managed via **Docker 
 
 ### Services
 
-| Service    | Description                        | Port exposed | Networks           |
-|------------|------------------------------------|--------------|--------------------|
-| `frontend` | Angular app (served via Nginx)     | 4200         | public, internal   |
-| `backend`  | FastAPI Python API                 | 8000         | public, internal   |
-| `postgres` | PostgreSQL database                | 5432         | public, internal   |
-| `ollama`   | Local LLM runtime                  | internal only| internal           |
-| `qdrant`   | Vector database                    | 6333         | internal           |
+| Service               | Description                        | Port exposed | Networks           |
+|-----------------------|------------------------------------|--------------|--------------------|-
+| `frontend`            | Angular app (served via Nginx)     | 4200         | public, internal   |
+| `bff-service`         | BFF — public API gateway           | 8000         | public, internal   |
+| `chat-service`        | FastAPI conversation management    | internal only| internal           |
+| `ai-platform-service` | FastAPI AI/ML infrastructure       | internal only| internal           |
+| `postgres-chat`       | PostgreSQL (chat data)             | 5432         | public, internal   |
+| `postgres-ai`         | PostgreSQL (LLM call logs)         | 5433         | public, internal   |
+| `ollama`              | Local LLM runtime                  | internal only| internal           |
+| `qdrant`              | Vector database                    | 6333         | internal, public   |
 
 All services run locally via a single `docker-compose.yml`.
 
@@ -381,11 +407,22 @@ Users can attach files to any chat session. Files are processed asynchronously i
 
 ### API Endpoints
 
+#### Chat Service endpoints
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/sessions/{session_id}/documents` | Upload a file (multipart/form-data) |
 | `GET` | `/sessions/{session_id}/documents` | List documents for a session |
 | `DELETE` | `/sessions/documents/{document_id}` | Delete document (file + Qdrant + DB) |
+
+#### AI Platform endpoints called by Chat Service
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/ai/generate-chat-response` | Full chat pipeline: RAG → prompt → LLM → log |
+| `POST` | `/ai/generate-response` | Generic LLM call (no RAG, used for summaries) |
+| `POST` | `/documents/ingest-document` | Background document ingestion |
+| `DELETE` | `/documents/{id}/chunks` | Delete Qdrant chunks for a document |
 
 ### Ingestion Pipeline (BackgroundTask)
 
@@ -443,9 +480,9 @@ Service: `frontend/src/app/services/document.service.ts`
 
 After each LLM response, the backend stores a lightweight observability record in the `llm_calls` table. An immediate cleanup query trims the table to the **10 newest rows globally**, so storage footprint is fixed and tiny.
 
-Fields stored per call: `chat_session_id`, `final_prompt` (the full assembled prompt), `model_name`, `created_at`.
+Fields stored per call: `chat_session_id`, `final_prompt` (the full assembled prompt), `ai_response` (the model's reply), `model_name`, `created_at`. Prompt and response are stored as a pair in the same row.
 
-Implementation: `backend/app/repositories/llm_call_repository.py` → `save_and_limit_persisted_llm_call()`.
+Implementation: `services/ai-platform-service/app/repositories/llm_call_repository.py` → `save_and_limit_persisted_llm_call()`.
 
 Retention SQL (runs after every insert):
 ```sql
@@ -481,30 +518,37 @@ LLM responds with document-grounded answer
 If Qdrant is unavailable or no documents have been uploaded for the session, `retrieve_relevant_chunks()` returns `[]` and the chat proceeds normally.
 
 Config: `RAG_TOP_K`, `RAG_MAX_CONTEXT_CHARS` in `docker-local.env`.
-Implementation: `backend/app/services/rag_service.py`.
+Implementation: `services/ai-platform-service/app/services/rag_service.py`.
 
 ---
 
 ## Logging
 
-Application-level logging is configured in `backend/app/main.py` via `logging.basicConfig(level=INFO)`.
+Application-level logging is configured in each service's `main.py` via `logging.basicConfig(level=INFO)`.
 
-Key log lines:
+**Chat Service logs:**
 ```
-INFO  app.services.chat_service             Building context: N messages (window=6), summary=yes/no, session=<uuid>
-INFO  app.services.memory_service           Summary check: session=<uuid> unsummarized=N threshold=6
-INFO  app.services.memory_service           Summary triggered: session=<uuid> (unsummarized=N, threshold=6)
-INFO  app.services.memory_service           Summary updated: session=<uuid> summarized_count=N
-INFO  app.services.document_service         Document <uuid> uploaded: filename.pdf (N bytes)
-INFO  app.services.document_ingestion_service  Processing document <uuid> (filename.pdf)
+INFO  app.services.chat_service          Building context: N messages (window=N), summary=yes/no, session=<uuid>
+INFO  app.clients.ai_platform_client     Chat Service → AI request sent (session=<uuid> model=local)
+INFO  app.services.memory_service        Summary check: session=<uuid> unsummarized=N threshold=N
+INFO  app.services.memory_service        Summary triggered / Summary updated
+INFO  app.services.document_service      Document <uuid> uploaded: filename.pdf (N bytes)
+INFO  app.api.internal_controller        Document <uuid> status updated → processed
+INFO  app.services.chat_service          Session <uuid> deleted
+```
+
+**AI Platform Service logs:**
+```
+INFO  app.api.llm_controller                 AI request sent — model=local session=<uuid>
+INFO  app.api.llm_controller                 AI response generated — model=local session=<uuid>
+INFO  app.services.rag_service               RAG retrieval: session=<uuid> retrieved=N selected=N
+INFO  app.services.document_ingestion_service  Processing document <uuid> (file.pdf)
 INFO  app.services.document_ingestion_service  Document <uuid>: text extracted (N chars)
 INFO  app.services.document_ingestion_service  Document <uuid>: N chunks generated
 INFO  app.services.document_ingestion_service  Document <uuid>: embeddings stored in Qdrant
-INFO  app.services.rag_service             RAG retrieval: session=<uuid> retrieved=N selected=N
-DEBUG app.repositories.llm_call_repository LLM call stored: model=<model> rag_chunks=N
-DEBUG app.repositories.llm_call_repository Cleanup executed: remaining_calls=10
-INFO  app.services.vector_store_service     Deleted Qdrant chunks for document <uuid>
-INFO  app.services.chat_service             Session <uuid> deleted
+INFO  app.services.document_ingestion_service  Document <uuid>: status callback sent → processed
+DEBUG app.repositories.llm_call_repository   LLM call stored — model=llama3. Cleanup executed, remaining_calls<=10
+INFO  app.services.vector_store_service      Deleted Qdrant chunks for document <uuid>
 ```
 
 ---
@@ -527,3 +571,6 @@ INFO  app.services.chat_service             Session <uuid> deleted
 | 2026-03-11 | Delete chat session — cascade completo: Qdrant chunks + archivos + mensajes + summary + sesión |
 | 2026-03-11 | RAG retrieval (Stage 2) — rag_service.py, search_chunks(), 5-layer prompt, RAG_TOP_K / RAG_MAX_CONTEXT_CHARS |
 | 2026-03-11 | LLM call logging — llm_calls table, save_and_limit_persisted_llm_call(), 10-row global retention; fix qdrant client.search() → query_points() |
+| 2026-03-12 | Service architecture refactor — monolith split into Chat Service (port 8000) + AI Platform Service (port 8001); two postgres instances; ai_platform_client.py; internal status callback; llm_calls adds ai_response column; PROJECT_STRUCTURE.md created |
+| 2026-03-12 | AI Platform controller split — ai_controller.py split into llm_controller.py (prefix /ai) and document_controller.py (prefix /documents); chat-service client updated to new document routes; prompt_builder typo fix (last_mesages → last_messages) |
+| 2026-03-12 | BFF Service introduced — thin proxy gateway on port 8000; chat-service moved to internal-only network; CORS ownership transferred to BFF; frontend unchanged |

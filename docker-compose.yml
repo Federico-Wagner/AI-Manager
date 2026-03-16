@@ -5,43 +5,94 @@ services:
     ports:
       - "4200:80"
     depends_on:
-      - backend
+      - bff-service
+    networks:
+      - public
+
+  bff-service:
+    build: ./services/bff-service
+    ports:
+      - "8000:8000"
+    env_file:
+      - docker-local.env
+    depends_on:
+      - chat-service
     networks:
       - public
       - internal
 
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
+  chat-service:
+    build: ./services/chat-service
     env_file:
       - docker-local.env
     volumes:
       - uploads_data:/data/uploads
     depends_on:
-      postgres:
+      postgres-chat:
+        condition: service_healthy
+      ai-platform-service:
+        condition: service_started
+    networks:
+      - internal
+
+  ai-platform-service:
+    build: ./services/ai-platform-service
+    ports:
+      - "8001:8001"
+    environment:
+      HF_HUB_OFFLINE: "1"
+    env_file:
+      - docker-local.env
+    volumes:
+      - uploads_data:/data/uploads
+    depends_on:
+      postgres-ai:
         condition: service_healthy
       ollama:
         condition: service_started
       qdrant:
         condition: service_started
     networks:
-      - public
       - internal
 
-  postgres:
+  postgres-chat:
     image: postgres:15
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_chat_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U $CHAT_DB_USER"]
       interval: 5s
       timeout: 5s
       retries: 5
     env_file:
       - docker-local.env
+    environment:
+      POSTGRES_DB: ${CHAT_DB_NAME}
+      POSTGRES_USER: ${CHAT_DB_USER}
+      POSTGRES_PASSWORD: ${CHAT_DB_PASSWORD}
+    networks:
+      - public
+      - internal
+
+  postgres-ai:
+    image: postgres:15
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_ai_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $AI_DB_USER"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    env_file:
+      - docker-local.env
+    environment:
+      POSTGRES_DB: ${AI_DB_NAME}
+      POSTGRES_USER: ${AI_DB_USER}
+      POSTGRES_PASSWORD: ${AI_DB_PASSWORD}
     networks:
       - public
       - internal
@@ -72,10 +123,11 @@ services:
       - qdrant_data:/qdrant/storage
     networks:
       - internal
-      - public #for dashboard
+      - public  # for dashboard
 
 volumes:
-  postgres_data:
+  postgres_chat_data:
+  postgres_ai_data:
   ollama_data:
   qdrant_data:
   uploads_data:

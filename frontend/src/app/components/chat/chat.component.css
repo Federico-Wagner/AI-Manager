@@ -118,6 +118,21 @@
   text-align: center;
 }
 
+.session-spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #1a73e8;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-right: 2px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ── Chat main panel ──────────────────────── */
 
 .chat-main {
@@ -181,6 +196,22 @@
   white-space: pre-wrap;
   word-wrap: break-word;
   font-size: 0.95rem;
+}
+
+.message-content strong {
+  font-weight: 700;
+}
+
+.message-content em {
+  font-style: italic;
+}
+
+.message-content code {
+  background: rgba(0, 0, 0, 0.08);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.88em;
 }
 
 .loading .message-content {
