@@ -24,6 +24,7 @@ export class ChatComponent implements OnInit, AfterViewChecked {
   selectedModel = 'local';
   isLoading = false;
   currentSessionId?: string;
+  private needsScroll = false;
 
   constructor(private chatService: ChatService) {}
 
@@ -32,7 +33,10 @@ export class ChatComponent implements OnInit, AfterViewChecked {
   }
 
   ngAfterViewChecked(): void {
-    this.scrollToBottom();
+    if (this.needsScroll) {
+      this.scrollToBottom();
+      this.needsScroll = false;
+    }
   }
 
   loadSessions(): void {
@@ -50,6 +54,7 @@ export class ChatComponent implements OnInit, AfterViewChecked {
           role: m.role as 'user' | 'assistant',
           content: m.content,
         }));
+        this.needsScroll = true;
       },
       error: (err) => console.error('Failed to load messages:', err),
     });
@@ -66,6 +71,7 @@ export class ChatComponent implements OnInit, AfterViewChecked {
 
     // Show user message immediately
     this.messages.push({ role: 'user', content: trimmedPrompt });
+    this.needsScroll = true;
     this.prompt = '';
     this.isLoading = true;
 
@@ -75,6 +81,7 @@ export class ChatComponent implements OnInit, AfterViewChecked {
         next: (response) => {
           this.currentSessionId = response.chat_session_id;
           this.messages.push({ role: 'assistant', content: response.response });
+          this.needsScroll = true;
           this.isLoading = false;
           this.loadSessions();
         },

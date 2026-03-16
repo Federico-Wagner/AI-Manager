@@ -15,6 +15,11 @@
         [title]="s.title"
       >
         <span class="session-label">{{ s.title }}</span>
+        <span
+          *ngIf="s.id === currentSessionId && isLoading"
+          class="session-spinner"
+          title="Waiting for response…"
+        ></span>
         <button
           class="session-delete-btn"
           (click)="deleteSession(s, $event)"
@@ -42,7 +47,7 @@
         [class.ai-message]="msg.role === 'assistant'"
       >
         <span class="message-role">{{ msg.role === 'user' ? 'You' : 'AI' }}</span>
-        <p class="message-content">{{ msg.content }}</p>
+        <div class="message-content" [innerHTML]="msg.content | markdown"></div>
       </div>
 
       <!-- Typing indicator -->

@@ -10,7 +10,22 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(mkdir -p services)",
-      "Bash(cp -r backend services/chat-service)"
+      "Bash(cp -r backend services/chat-service)",
+      "Bash(docker compose:*)",
+      "Bash(npm install:*)",
+      "Bash(claude mcp:*)",
+      "mcp__playwright",
+      "Bash(cd:*)",
+      "Bash(curl:*)",
+      "Bash(docker exec:*)"
     ]
+  },
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest"
+      ]
+    }
   }
 }
